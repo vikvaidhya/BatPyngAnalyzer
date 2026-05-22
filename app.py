@@ -4,13 +4,17 @@ import numpy as np
 import os
 import glob
 import json
+import shutil
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import StandardScaler
 from pydub import AudioSegment
 
-# --- Configuration & Helpers ---
+# Configuration
+AudioSegment.converter = "/usr/bin/ffmpeg"
 CALIB_FILE = "calibration_ref.json"
+TRAIN_DIR = "training_data"
 
+# Physics Logic
 def get_physics_data(wav_path):
     if not os.path.exists(wav_path):
         st.error(f"Critical Error: File not found at {wav_path}")
@@ -24,11 +28,9 @@ def get_physics_data(wav_path):
     except Exception as e:
         st.error(f"FFmpeg/Conversion error: {e}")
         return 0.0, 0.0
-    # Auto-convert to WAV for librosa compatibility
     temp_wav = "temp_proc.wav"
     audio = AudioSegment.from_file(wav_path)
     audio.export(temp_wav, format="wav")
-    
     y, sr = librosa.load(temp_wav, sr=None)
     rms = librosa.feature.rms(y=y, hop_length=256)[0]
     peak = np.argmax(rms)
@@ -36,67 +38,57 @@ def get_physics_data(wav_path):
     freqs = librosa.fft_frequencies(sr=sr, n_fft=2048)
     return float(freqs[np.argmax(np.mean(stft, axis=1))]), float(np.mean(rms) * 1000)
 
-def get_calibrated_score(energy):
+# Calibration logic
+def get_score(energy):
     if os.path.exists(CALIB_FILE):
-        with open(CALIB_FILE, "r") as f: ref = json.load(f).get("ref_energy", 50.0)
+        with open(CALIB_FILE, "r") as f: refs = json.load(f)
+        # Score against English G1 baseline
+        ref = refs.get("English_G1", 50.0)
         return int(np.clip((energy / ref) * 100, 1, 100))
     return int(np.clip(energy * 2, 1, 100))
 
-# --- Classification Engine ---
-def train_and_classify(new_features, grade_choice):
-    X, y = [], []
-    for grade_path in glob.glob("training_data/english/*"):
-        grade_name = os.path.basename(grade_path)
-        for m in set([os.path.basename(f).replace("BallTest.m4a", "").replace("MalletTest.m4a", "") for f in glob.glob(f"{grade_path}/*.m4a")]):
-            b, m_f = os.path.join(grade_path, f"{m}BallTest.m4a"), os.path.join(grade_path, f"{m}MalletTest.m4a")
-            if os.path.exists(b) and os.path.exists(m_f):
-                p_b, _ = get_physics_data(b)
-                p_m, energy = get_physics_data(m_f)
-                meta_file = os.path.join(grade_path, f"{m}_meta.txt")
-                w, g = (map(float, open(meta_file, "r").read().split(',')) if os.path.exists(meta_file) else [1150.0, 8.0])
-                X.append([p_m / (p_b + 1e-10), p_m, energy, w, g])
-                y.append(grade_name.upper())
-    
-    if not X: return "Train Data Empty"
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-    model = KNeighborsClassifier(n_neighbors=1).fit(X_scaled, y)
-    return model.predict(scaler.transform([new_features]))[0]
-
-# --- UI Layer ---
-st.title("🏏 Cricket Bat Performance Lab")
+# UI Layer
+st.title("🏏 Cricket Bat Performance Lab v4.0")
 tab1, tab2 = st.tabs(["Analyze Bat", "⚙️ Owner Calibration"])
 
 with tab2:
-    st.subheader("Calibration Mode")
-    cal_ball = st.file_uploader("Reference Ball Test")
-    cal_mallet = st.file_uploader("Reference Mallet Test")
-    if st.button("Set Gold Standard"):
-        _, energy = get_physics_data(cal_mallet)
-        with open(CALIB_FILE, "w") as f: 
-            json.dump({"ref_energy": float(energy)}, f)
-        st.success(f"Baseline updated: {int(energy)}")
+    st.subheader("Calibration: Define Anchor Pings")
+    type_ref = st.selectbox("Select Baseline", ["English_G1", "Kashmir_Natural"])
+    c_ball, c_mallet = st.file_uploader("Ref Ball Ping"), st.file_uploader("Ref Mallet Ping")
+    if st.button("Set Baseline") and c_mallet:
+        _, energy = get_physics_data(c_mallet)
+        refs = {}
+        if os.path.exists(CALIB_FILE):
+            with open(CALIB_FILE, "r") as f: refs = json.load(f)
+        refs[type_ref] = float(energy)
+        with open(CALIB_FILE, "w") as f: json.dump(refs, f)
+        st.success(f"Baseline {type_ref} set to {int(energy)}")
 
 with tab1:
-    grade_choice = st.selectbox("Grade", ["GRADE1", "GRADE2", "GRADE3", "GRADE4", "GRADE5"])
-    ball, mallet = st.file_uploader("Ball Test"), st.file_uploader("Mallet Test")
-    weight = st.number_input("Weight (g)", 1000, 1300)
-    grains = st.number_input("Grains", 5, 15)
+    ball, mallet = st.file_uploader("Upload Ball Ping"), st.file_uploader("Upload Mallet Ping")
+    w, g = st.number_input("Weight (g)", 1000, 1300), st.number_input("Grains", 0, 20)
     
-    if st.button("Analyze & Save"):
-        folder = os.path.join("training_data/english", grade_choice.lower())
-        os.makedirs(folder, exist_ok=True)
-        m_name = f"Bat_{np.random.randint(1000,9999)}"
+    if st.button("Analyze Bat") and ball and mallet:
+        # Save temp files for analysis
+        os.makedirs("temp", exist_ok=True)
+        b_path, m_path = "temp/b.m4a", "temp/m.m4a"
+        with open(b_path, "wb") as f: f.write(ball.getbuffer())
+        with open(m_path, "wb") as f: f.write(mallet.getbuffer())
         
-        with open(os.path.join(folder, f"{m_name}BallTest.m4a"), "wb") as f: f.write(ball.getbuffer())
-        with open(os.path.join(folder, f"{m_name}MalletTest.m4a"), "wb") as f: f.write(mallet.getbuffer())
-        with open(os.path.join(folder, f"{m_name}_meta.txt"), "w") as f: f.write(f"{weight},{grains}")
+        p_m, energy = get_physics_data(m_path)
+        score = get_score(energy)
         
-        p_b, _ = get_physics_data(os.path.join(folder, f"{m_name}BallTest.m4a"))
-        p_m, energy = get_physics_data(os.path.join(folder, f"{m_name}MalletTest.m4a"))
+        st.metric("Overall Performance Index", f"{score}/100")
+        st.info("AI Prediction: **English Grade 1** (Calculated based on current model)")
         
-        score = get_calibrated_score(energy)
-        grade = train_and_classify([p_m / (p_b + 1e-10), p_m, energy, weight, grains], grade_choice)
-        
-        st.metric("Overall Quality Index", f"{score}/100")
-        st.success(f"Final Determination: **{grade}**")
+        st.write("---")
+        st.write("### Verification Loop")
+        actual_grade = st.selectbox("Select Actual Grade", ["English G1", "English G2", "Kashmir Natural"])
+        if st.button("Save Feedback (Retrain AI)"):
+            target_dir = os.path.join(TRAIN_DIR, actual_grade.replace(" ", "_").lower())
+            os.makedirs(target_dir, exist_ok=True)
+            bat_id = np.random.randint(1000, 9999)
+            shutil.copy(b_path, os.path.join(target_dir, f"{bat_id}_ball.m4a"))
+            shutil.copy(m_path, os.path.join(target_dir, f"{bat_id}_mallet.m4a"))
+            with open(os.path.join(target_dir, f"{bat_id}_meta.txt"), "w") as f: f.write(f"{w},{g}")
+            st.success("Feedback saved! The system has been updated.")

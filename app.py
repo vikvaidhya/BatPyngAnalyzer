@@ -12,6 +12,18 @@ from pydub import AudioSegment
 CALIB_FILE = "calibration_ref.json"
 
 def get_physics_data(wav_path):
+    if not os.path.exists(wav_path):
+        st.error(f"Critical Error: File not found at {wav_path}")
+        return 0.0, 0.0 # Return empty values to prevent crash
+    
+    # Auto-convert to WAV for librosa compatibility
+    temp_wav = "temp_proc.wav"
+    try:
+        audio = AudioSegment.from_file(wav_path)
+        audio.export(temp_wav, format="wav")
+    except Exception as e:
+        st.error(f"FFmpeg/Conversion error: {e}")
+        return 0.0, 0.0
     # Auto-convert to WAV for librosa compatibility
     temp_wav = "temp_proc.wav"
     audio = AudioSegment.from_file(wav_path)

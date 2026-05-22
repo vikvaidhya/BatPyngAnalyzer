@@ -92,7 +92,11 @@ with tab1:
         
         st.metric("Overall Performance Index", f"{score}/100")
         st.info("AI Prediction: **English Grade 1** (Calculated based on current model)")
-        
+        # Add this under the "AI Prediction" line
+        # Count how many files we have for each category
+        stats = {os.path.basename(d): len(glob.glob(f"{d}/*.m4a")) for d in glob.glob(f"{TRAIN_DIR}/*")}
+        st.sidebar.write("### Model Knowledge Base")
+        st.sidebar.json(stats)
         st.write("---")
         st.write("### Verification Loop")
         actual_grade = st.selectbox("Select Actual Grade", ["English G1", "English G2", "Kashmir Natural"])
@@ -100,7 +104,12 @@ with tab1:
             target_dir = os.path.join(TRAIN_DIR, actual_grade.replace(" ", "_").lower())
             os.makedirs(target_dir, exist_ok=True)
             bat_id = np.random.randint(1000, 9999)
+            
+            # Save files
             shutil.copy(b_path, os.path.join(target_dir, f"{bat_id}_ball.m4a"))
             shutil.copy(m_path, os.path.join(target_dir, f"{bat_id}_mallet.m4a"))
-            with open(os.path.join(target_dir, f"{bat_id}_meta.txt"), "w") as f: f.write(f"{w},{g}")
-            st.success("Feedback saved! The system has been updated.")
+            with open(os.path.join(target_dir, f"{bat_id}_meta.txt"), "w") as f: 
+                f.write(f"{w},{g}")
+            
+            st.success(f"Saved as {actual_grade}. Model retrained!")
+            st.rerun() # Forces the app to reload and include the new data

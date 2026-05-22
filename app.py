@@ -54,15 +54,27 @@ tab1, tab2 = st.tabs(["Analyze Bat", "⚙️ Owner Calibration"])
 with tab2:
     st.subheader("Calibration: Define Anchor Pings")
     type_ref = st.selectbox("Select Baseline", ["English_G1", "Kashmir_Natural"])
-    c_ball, c_mallet = st.file_uploader("Ref Ball Ping"), st.file_uploader("Ref Mallet Ping")
+    c_ball = st.file_uploader("Ref Ball Ping")
+    c_mallet = st.file_uploader("Ref Mallet Ping")
+    
     if st.button("Set Baseline") and c_mallet:
-        _, energy = get_physics_data(c_mallet)
+        # Save the uploaded file to a temporary disk path first
+        temp_path = "temp_calib.m4a"
+        with open(temp_path, "wb") as f:
+            f.write(c_mallet.getbuffer())
+        
+        # Now pass the path (string) to the function
+        _, energy = get_physics_data(temp_path)
+        
         refs = {}
         if os.path.exists(CALIB_FILE):
             with open(CALIB_FILE, "r") as f: refs = json.load(f)
         refs[type_ref] = float(energy)
         with open(CALIB_FILE, "w") as f: json.dump(refs, f)
+        
         st.success(f"Baseline {type_ref} set to {int(energy)}")
+        # Cleanup
+        if os.path.exists(temp_path): os.remove(temp_path)
 
 with tab1:
     ball, mallet = st.file_uploader("Upload Ball Ping"), st.file_uploader("Upload Mallet Ping")
